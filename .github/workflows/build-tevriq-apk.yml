@@ -89,9 +89,49 @@ jobs:
           "$apksigner" verify --verbose --print-certs "$source_apk" > signing-verification.txt
           # This is the public SHA-256 certificate fingerprint, NEVER the private key.
           expected_cert="4756edb067b7b4cdddf7d7d0d2433ed59a27bb32fc809d29b2537cdccf198ba0"
-          actual_cert=$(sed -nE 's/.*Signer #1 certificate SHA-256 digest: ([0-9A-Fa-f]+).*/\1/p' signing-verification.txt | head -n 1 | tr 'A-F' 'a-f')
+          # Verify the certificate embedded in the APK Signature Scheme v2
+          # block, avoiding fragile command-line report formatting.
+          actual_cert=$(python3 - "$source_apk" <<'PY'
+          import hashlib
+          import struct
+          import sys
+
+          data = open(sys.argv[1], "rb").read()
+          eocd = data.rfind(b"PK\\x05\\x06")
+          if eocd < 0:
+              raise SystemExit("Not a valid APK ZIP archive")
+          cd_offset = struct.unpack_from("<I", data, eocd + 16)[0]
+          if data[cd_offset - 16:cd_offset] != b"APK Sig Block 42":
+              raise SystemExit("APK Signature Block is missing")
+          block_size = struct.unpack_from("<Q", data, cd_offset - 24)[0]
+          pos = cd_offset - block_size
+          end = cd_offset - 24
+
+          def read_sequence(buf, offset):
+              size = struct.unpack_from("<I", buf, offset)[0]
+              return buf[offset + 4: offset + 4 + size], offset + 4 + size
+
+          while pos < end:
+              size = struct.unpack_from("<Q", data, pos)[0]
+              block_id = struct.unpack_from("<I", data, pos + 8)[0]
+              value = data[pos + 12:pos + 8 + size]
+              pos += 8 + size
+              if block_id == 0x7109871a:
+                  signers, _ = read_sequence(value, 0)
+                  signer, _ = read_sequence(signers, 0)
+                  signed_data, _ = read_sequence(signer, 0)
+                  _, next_pos = read_sequence(signed_data, 0)
+                  certs, _ = read_sequence(signed_data, next_pos)
+                  cert, _ = read_sequence(certs, 0)
+                  print(hashlib.sha256(cert).hexdigest())
+                  break
+          else:
+              raise SystemExit("APK Signature Scheme v2 block not found")
+          PY
+          )
+          echo "APK signing cert SHA256: $actual_cert"
           if [[ "$actual_cert" != "$expected_cert" ]]; then
-            echo "::error::APK certificate is NOT the fixed Tevriq signing certificate."
+            echo "::error::APK certificate differs from the fixed Tevriq certificate."
             exit 1
           fi
           badging=$("$aapt" dump badging "$source_apk" | head -n 1)
