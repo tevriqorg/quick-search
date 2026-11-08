@@ -12,7 +12,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.tk.quicksearch"
+        applicationId = "org.tevriq.quicksearch"
         minSdk = 24
         targetSdk = 37
         versionCode = 104
@@ -34,6 +34,21 @@ android {
         }
     }
 
+
+    // CI supplies this file and its passwords from GitHub Actions Secrets.
+    // Without a keystore, release APKs are UNSIGNED, never debug-key-signed.
+    signingConfigs {
+        val releaseStoreFile = providers.environmentVariable("TEVRIQ_RELEASE_STORE_FILE").orNull
+        if (!releaseStoreFile.isNullOrBlank()) {
+            create("tevriqRelease") {
+                storeFile = file(releaseStoreFile)
+                storePassword = providers.environmentVariable("TEVRIQ_RELEASE_STORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("TEVRIQ_RELEASE_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("TEVRIQ_RELEASE_KEY_PASSWORD").orNull
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -43,7 +58,7 @@ android {
             resValue("string", "app_name", "QS Debug")
         }
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("tevriqRelease")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

@@ -1,0 +1,81 @@
+name: Tevriq Quick Search APK
+
+on:
+  push:
+    branches:
+      - main
+      - feat/tevriq-v5-actions-20261108
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Select debug or fixed-key release APK"
+        required: true
+        type: choice
+        default: debug
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: read
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android 17 compile SDK
+        run: sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Verify code and build debug APK
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_type == 'debug' }}
+        run: |
+          chmod +x ./gradlew
+          bash scripts/verify.sh --no-device
+          ./gradlew --no-daemon :app:assembleFdroidDebug
+      - name: Build fixed-key signed release APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' }}
+        env:
+          KEYSTORE_B64: ${{ secrets.TEVRIQ_RELEASE_KEYSTORE_BASE64 }}
+          TEVRIQ_RELEASE_STORE_FILE: ${{ runner.temp }}/tevriq-release.p12
+          TEVRIQ_RELEASE_STORE_PASSWORD: ${{ secrets.TEVRIQ_RELEASE_STORE_PASSWORD }}
+          TEVRIQ_RELEASE_KEY_ALIAS: ${{ secrets.TEVRIQ_RELEASE_KEY_ALIAS }}
+          TEVRIQ_RELEASE_KEY_PASSWORD: ${{ secrets.TEVRIQ_RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$KEYSTORE_B64" || -z "$TEVRIQ_RELEASE_STORE_PASSWORD" || -z "$TEVRIQ_RELEASE_KEY_ALIAS" || -z "$TEVRIQ_RELEASE_KEY_PASSWORD" ]]; then
+            echo "::error::Configure the four TEVRIQ_RELEASE_* GitHub Actions Secrets before requesting a release."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$TEVRIQ_RELEASE_STORE_FILE"
+          trap 'rm -f "$TEVRIQ_RELEASE_STORE_FILE"' EXIT
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleFdroidRelease
+      - name: Upload debug APK
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_type == 'debug' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tevriq-quicksearch-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload signed release APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tevriq-quicksearch-release-${{ github.run_number }}
+          path: app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
+          if-no-files-found: error
+          retention-days: 30

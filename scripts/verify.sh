@@ -96,7 +96,7 @@ if ! ./gradlew -q --console=plain "${tasks[@]}" ${gradle_args[@]+"${gradle_args[
 fi
 
 installed=false
-debug_package=com.tk.quicksearch.debug
+debug_package=org.tevriq.quicksearch.debug
 apk=app/build/outputs/apk/standard/debug/app-standard-debug.apk
 if $assemble && $device && ((${#failures[@]} == 0)) && command -v adb >/dev/null; then
     connected=$(adb devices | awk 'NR > 1 && $2 == "device"' | wc -l | tr -d ' ')

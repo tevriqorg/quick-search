@@ -16,7 +16,7 @@ Repository playbook for coding agents. When prose and code disagree, trust the c
 - Android launcher + unified search app: Kotlin, Jetpack Compose, Material 3. MVVM with unidirectional data flow, `StateFlow`, immutable state.
 - Modules: `:app` and `:benchmark` (macrobenchmark/baseline profile).
 - Flavors `standard` (Play review/update libs) and `fdroid` (no Play libs). Flavor-specific code lives in `app/src/standard/` and `app/src/fdroid/`; shared code in `app/src/main/`.
-- App ID `com.tk.quicksearch`; debug builds use `com.tk.quicksearch.debug` ("QS Debug"), which is separate from the user's installed app but holds their real test data.
+- Tevriq fork App ID `org.tevriq.quicksearch`; debug builds use `org.tevriq.quicksearch.debug` ("QS Debug"). Kotlin namespace and activity class names remain `com.tk.quicksearch` to minimize upstream conflicts.
 - Source paths below are relative to `app/src/main/java/com/tk/quicksearch/`.
 - Entry points: `app/MainActivity.kt` (regular launch, assistant/search/share/process-text/import), `app/HomeActivity.kt` (HOME role), `overlay/OverlayActivity.kt` (draw-over-apps mode).
 - Persistence: modular `SharedPreferences` (secrets via the existing encrypted path). Room for notes (`search/data/notes/`), bookmarks (`search/data/bookmarks/`), and notification history (`search/notificationHistory/`). Startup app catalog: `search/data/AppCache.kt`.
