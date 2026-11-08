@@ -15,8 +15,9 @@ android {
         applicationId = "org.tevriq.quicksearch"
         minSdk = 24
         targetSdk = 37
-        versionCode = 104
-        versionName = "5.0"
+        // CI assigns monotonically increasing, installable release versions.
+        versionCode = providers.gradleProperty("tevriqVersionCode").orNull?.toInt() ?: 104
+        versionName = providers.gradleProperty("tevriqVersionName").orNull ?: "5.0"
         manifestPlaceholders["profileCaptureExported"] =
             providers.gradleProperty("profileCapture").orElse("false").get().toBoolean()
 

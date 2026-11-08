@@ -1,28 +1,23 @@
-name: Tevriq Quick Search APK
+name: Tevriq Quick Search Release
 
 on:
   push:
-    branches:
-      - main
-      - feat/tevriq-v5-actions-20261108
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: "Select debug or fixed-key release APK"
-        required: true
-        type: choice
-        default: debug
-        options:
-          - debug
-          - release
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: tevriq-quicksearch-release-main
+  cancel-in-progress: false
 
 jobs:
-  android-apk:
+  signed-release:
+    # Only a verified main-branch commit may publish an installable APK.
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -35,24 +30,35 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
-      - name: Install Android 17 compile SDK
+      - name: Install Android API 37 SDK
         shell: bash
         run: |
+          set -euo pipefail
           sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" --channel=3
-          # Some SDK/AGP versions resolve API 37 using a bare android-37 directory.
           if [[ -d "$ANDROID_SDK_ROOT/platforms/android-37.0" && ! -e "$ANDROID_SDK_ROOT/platforms/android-37" ]]; then
             ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
           fi
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-      - name: Verify code and build debug APK
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_type == 'debug' }}
+      - name: Set release version and artifact name
+        shell: bash
         run: |
+          set -euo pipefail
+          release_version="5.0-tevriq.${GITHUB_RUN_NUMBER}"
+          release_code="$((100000 + GITHUB_RUN_NUMBER))"
+          release_tag="tevriq-v5.0-r${GITHUB_RUN_NUMBER}"
+          echo "RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
+          echo "RELEASE_CODE=$release_code" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
+          echo "APK_NAME=Tevriq-QuickSearch-${release_tag}.apk" >> "$GITHUB_ENV"
+          printf 'Release: %s (versionCode=%s)\n' "$release_version" "$release_code"
+      - name: Verify source and unit tests (no debug APK published)
+        shell: bash
+        run: |
+          set -euo pipefail
           chmod +x ./gradlew
-          bash scripts/verify.sh --no-device
-          ./gradlew --no-daemon :app:assembleFdroidDebug
+          bash scripts/verify.sh --no-device --no-assemble
       - name: Build fixed-key signed release APK
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' }}
         env:
           KEYSTORE_B64: ${{ secrets.TEVRIQ_RELEASE_KEYSTORE_BASE64 }}
           TEVRIQ_RELEASE_STORE_FILE: ${{ runner.temp }}/tevriq-release.p12
@@ -63,27 +69,57 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$KEYSTORE_B64" || -z "$TEVRIQ_RELEASE_STORE_PASSWORD" || -z "$TEVRIQ_RELEASE_KEY_ALIAS" || -z "$TEVRIQ_RELEASE_KEY_PASSWORD" ]]; then
-            echo "::error::Configure the four TEVRIQ_RELEASE_* GitHub Actions Secrets before requesting a release."
+            echo "::error::Four TEVRIQ_RELEASE_* repository secrets are required."
             exit 1
           fi
           umask 077
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$TEVRIQ_RELEASE_STORE_FILE"
           trap 'rm -f "$TEVRIQ_RELEASE_STORE_FILE"' EXIT
-          chmod +x ./gradlew
-          ./gradlew --no-daemon :app:assembleFdroidRelease
-      - name: Upload debug APK
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_type == 'debug' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: tevriq-quicksearch-debug-${{ github.run_number }}
-          path: app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk
-          if-no-files-found: error
-          retention-days: 30
-      - name: Upload signed release APK
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: tevriq-quicksearch-release-${{ github.run_number }}
-          path: app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
-          if-no-files-found: error
-          retention-days: 30
+          ./gradlew --no-daemon :app:assembleFdroidRelease \
+            "-PtevriqVersionCode=$RELEASE_CODE" \
+            "-PtevriqVersionName=$RELEASE_VERSION"
+      - name: Verify APK identity, version and signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_apk="app/build/outputs/apk/fdroid/release/app-fdroid-release.apk"
+          test -s "$source_apk"
+          apksigner="$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner"
+          aapt="$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt"
+          "$apksigner" verify --verbose --print-certs "$source_apk" > signing-verification.txt
+          # This is the public SHA-256 certificate fingerprint, NEVER the private key.
+          expected_cert="4756edb067b7b4cdddf7d7d0d2433ed59a27bb32fc809d29b2537cdccf198ba0"
+          actual_cert=$(sed -nE 's/.*Signer #1 certificate SHA-256 digest: ([0-9A-Fa-f]+).*/\1/p' signing-verification.txt | head -n 1 | tr 'A-F' 'a-f')
+          if [[ "$actual_cert" != "$expected_cert" ]]; then
+            echo "::error::APK certificate is NOT the fixed Tevriq signing certificate."
+            exit 1
+          fi
+          badging=$("$aapt" dump badging "$source_apk" | head -n 1)
+          echo "$badging"
+          [[ "$badging" == *"name='org.tevriq.quicksearch'"* ]]
+          [[ "$badging" == *"versionCode='$RELEASE_CODE'"* ]]
+          [[ "$badging" == *"versionName='$RELEASE_VERSION'"* ]]
+          mkdir -p dist
+          cp "$source_apk" "dist/$APK_NAME"
+          sha256sum "dist/$APK_NAME" | tee dist/SHA256SUMS.txt
+      - name: Publish signed APK as GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            "dist/$APK_NAME" "dist/SHA256SUMS.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Quick Search $RELEASE_VERSION (Tevriq)" \
+            --notes "Fixed-key signed Android APK, package org.tevriq.quicksearch, versionCode $RELEASE_CODE. Built after source checks and unit tests on GitHub Actions. Download the .apk to install or upgrade; P20 watches this Release feed for delivery. OriginOS device gestures still require phone testing." \
+            --latest
+      - name: Publish run summary
+        shell: bash
+        run: |
+          echo "### Published $RELEASE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Package: \`org.tevriq.quicksearch\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version code: $RELEASE_CODE" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APK: $APK_NAME" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag: $RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
