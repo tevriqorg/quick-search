@@ -36,7 +36,13 @@ jobs:
         with:
           packages: platform-tools
       - name: Install Android 17 compile SDK
-        run: sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+        shell: bash
+        run: |
+          sdkmanager --install "platforms;android-37.0" "build-tools;37.0.0" --channel=3
+          # Some SDK/AGP versions resolve API 37 using a bare android-37 directory.
+          if [[ -d "$ANDROID_SDK_ROOT/platforms/android-37.0" && ! -e "$ANDROID_SDK_ROOT/platforms/android-37" ]]; then
+            ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
+          fi
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
       - name: Verify code and build debug APK
