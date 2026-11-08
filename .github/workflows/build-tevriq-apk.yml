@@ -97,7 +97,7 @@ jobs:
           import sys
 
           data = open(sys.argv[1], "rb").read()
-          eocd = data.rfind(b"PK\\x05\\x06")
+          eocd = data.rfind(b"PK\x05\x06")
           if eocd < 0:
               raise SystemExit("Not a valid APK ZIP archive")
           cd_offset = struct.unpack_from("<I", data, eocd + 16)[0]
