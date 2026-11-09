@@ -337,38 +337,24 @@ fun ContentLayout(
     // at their final position instead of being smoothly pushed down by the expanding grid.
     val hideOtherContent = waitingForSuggestions
     val topMatches =
-        if (state.topMatchesEnabled && hasQuery) {
-            rememberTopMatches(
-                query = state.query,
-                renderingState = regularRenderingState,
-                context = sectionContextForRecentHistoryExpansion,
-                params = sectionParams,
-                limit = state.topMatchesLimit,
-                topMatchesSectionOrder = state.topMatchesSectionOrder,
-                disabledTopMatchesSections = state.disabledTopMatchesSections,
-                secondaryRankingSignal = state.secondaryRankingSignal,
-                filterStaleCandidates = isLocalSearchRefreshing,
-                otherSearchItemIds =
-                    OtherSearchItemRegistry.visibleSearchItemIds(
-                        query = state.query,
-                        pinnedItemOrder = state.pinnedNonAppItemOrder,
-                        screenTimeState = state.screenTimeState,
-                    ),
-            )
-        } else {
-            emptyList()
-        }
-    val settledTopMatches =
-        if (state.topMatchesEnabled && hasQuery) {
-            rememberSettledTopMatches(
-                query = state.query,
-                currentMatches = topMatches,
-                isSearchRefreshing = isLocalSearchRefreshing,
-                limit = state.topMatchesLimit,
-            )
-        } else {
-            SettledTopMatchesState(isReady = true)
-        }
+        if (state.topMatchesEnabled && hasQuery) rememberTopMatches(
+            query = state.query, renderingState = regularRenderingState,
+            context = sectionContextForRecentHistoryExpansion, params = sectionParams,
+            limit = state.topMatchesLimit, topMatchesSectionOrder = state.topMatchesSectionOrder,
+            disabledTopMatchesSections = state.disabledTopMatchesSections,
+            secondaryRankingSignal = state.secondaryRankingSignal,
+            filterStaleCandidates = isLocalSearchRefreshing,
+            otherSearchItemIds = OtherSearchItemRegistry.visibleSearchItemIds(
+                query = state.query, pinnedItemOrder = state.pinnedNonAppItemOrder,
+                screenTimeState = state.screenTimeState,
+            ),
+        ) else emptyList()
+    val settledTopMatches = if (state.topMatchesEnabled && hasQuery) {
+        rememberSettledTopMatches(
+            query = state.query, currentMatches = topMatches,
+            isSearchRefreshing = isLocalSearchRefreshing, limit = state.topMatchesLimit,
+        )
+    } else SettledTopMatchesState(isReady = true)
     val displayedTopMatches = settledTopMatches.matches
     val canShowTopMatches =
         state.topMatchesEnabled &&
