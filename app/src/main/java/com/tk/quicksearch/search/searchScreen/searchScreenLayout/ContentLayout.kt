@@ -31,6 +31,7 @@ import com.tk.quicksearch.search.searchScreen.renderSection
 import com.tk.quicksearch.search.searchScreen.shared.reportCardlessTrailingEdge
 import com.tk.quicksearch.search.searchScreen.rememberSettledRegularSearchRenderingState
 import com.tk.quicksearch.search.searchScreen.rememberSettledTopMatches
+import com.tk.quicksearch.search.searchScreen.SettledTopMatchesState
 import com.tk.quicksearch.search.searchScreen.rememberTopMatches
 import com.tk.quicksearch.search.searchScreen.shouldDeferTopMatchesForLocalSearch
 import com.tk.quicksearch.search.searchScreen.ContactsSectionParams
@@ -153,7 +154,8 @@ fun ContentLayout(
             query = state.query,
             currentState = renderingState,
             isAppSearchRefreshing = state.isAppSearchInProgress,
-            secondarySectionsRefreshing = state.secondarySearchSectionsInProgress,
+            isSecondarySearchRefreshing =
+                state.isSecondarySearchInProgress || state.secondarySearchSectionsInProgress.isNotEmpty(),
         )
     // Home sections reserve their full height as soon as their data arrives and only fade in, so
     // nothing above them reflows while the rest of the agenda is still loading.
@@ -335,30 +337,38 @@ fun ContentLayout(
     // at their final position instead of being smoothly pushed down by the expanding grid.
     val hideOtherContent = waitingForSuggestions
     val topMatches =
-        rememberTopMatches(
-            query = state.query,
-            renderingState = regularRenderingState,
-            context = sectionContextForRecentHistoryExpansion,
-            params = sectionParams,
-            limit = state.topMatchesLimit,
-            topMatchesSectionOrder = state.topMatchesSectionOrder,
-            disabledTopMatchesSections = state.disabledTopMatchesSections,
-            secondaryRankingSignal = state.secondaryRankingSignal,
-            filterStaleCandidates = isLocalSearchRefreshing,
-            otherSearchItemIds =
-                OtherSearchItemRegistry.visibleSearchItemIds(
-                    query = state.query,
-                    pinnedItemOrder = state.pinnedNonAppItemOrder,
-                    screenTimeState = state.screenTimeState,
-                ),
-        )
+        if (state.topMatchesEnabled && hasQuery) {
+            rememberTopMatches(
+                query = state.query,
+                renderingState = regularRenderingState,
+                context = sectionContextForRecentHistoryExpansion,
+                params = sectionParams,
+                limit = state.topMatchesLimit,
+                topMatchesSectionOrder = state.topMatchesSectionOrder,
+                disabledTopMatchesSections = state.disabledTopMatchesSections,
+                secondaryRankingSignal = state.secondaryRankingSignal,
+                filterStaleCandidates = isLocalSearchRefreshing,
+                otherSearchItemIds =
+                    OtherSearchItemRegistry.visibleSearchItemIds(
+                        query = state.query,
+                        pinnedItemOrder = state.pinnedNonAppItemOrder,
+                        screenTimeState = state.screenTimeState,
+                    ),
+            )
+        } else {
+            emptyList()
+        }
     val settledTopMatches =
-        rememberSettledTopMatches(
-            query = state.query,
-            currentMatches = topMatches,
-            isSearchRefreshing = isLocalSearchRefreshing,
-            limit = state.topMatchesLimit,
-        )
+        if (state.topMatchesEnabled && hasQuery) {
+            rememberSettledTopMatches(
+                query = state.query,
+                currentMatches = topMatches,
+                isSearchRefreshing = isLocalSearchRefreshing,
+                limit = state.topMatchesLimit,
+            )
+        } else {
+            SettledTopMatchesState(isReady = true)
+        }
     val displayedTopMatches = settledTopMatches.matches
     val canShowTopMatches =
         state.topMatchesEnabled &&

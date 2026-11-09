@@ -7,7 +7,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.tk.quicksearch.search.appSettings.AppSettingResult
-import com.tk.quicksearch.search.core.SearchSection
 import com.tk.quicksearch.search.data.appShortcutRepository.StaticShortcut
 import com.tk.quicksearch.search.data.appShortcutRepository.shortcutKey
 import com.tk.quicksearch.search.deviceSettings.DeviceSetting
@@ -22,6 +21,7 @@ import com.tk.quicksearch.search.searchScreen.searchScreenLayout.SectionRenderin
 import kotlinx.coroutines.delay
 
 private const val TOP_MATCH_SETTLE_DEADLINE_MS = 110L
+private const val REGULAR_SEARCH_SETTLE_DEADLINE_MS = 120L
 
 internal class SettledSearchResultsBuffer<T>(private val emptyValue: T) {
     private var settledQuery = ""
@@ -136,6 +136,52 @@ internal fun TopMatchItem.stableKey(): String =
         is TopMatchItem.Other -> "other:$itemId"
     }
 
+internal data class StableSearchResultsState<T>(
+    val value: T,
+    val isReady: Boolean = false,
+)
+
+/**
+ * Keeps one coherent result snapshot on screen while a query is changing. A short deadline lets
+ * fast sources appear together without waiting indefinitely for a slow provider; late results are
+ * then committed once, when the full local search finishes.
+ */
+internal class StableSearchResultsBuffer<T>(private val emptyValue: T) {
+    private var activeQuery = ""
+    private var state = StableSearchResultsState(emptyValue)
+
+    fun displayedValue(
+        query: String,
+        currentValue: T,
+        isSearchRefreshing: Boolean,
+        deadlineReached: Boolean,
+    ): StableSearchResultsState<T> {
+        if (query.isBlank()) {
+            activeQuery = ""
+            state = StableSearchResultsState(emptyValue)
+            return StableSearchResultsState(currentValue, isReady = true)
+        }
+
+        if (query != activeQuery) {
+            val canReuseSettledValue = queriesAreOnSamePrefixPath(query, activeQuery)
+            activeQuery = query
+            state =
+                StableSearchResultsState(
+                    value = if (canReuseSettledValue) state.value else emptyValue,
+                    isReady = false,
+                )
+        }
+
+        if (!state.isReady && (!isSearchRefreshing || deadlineReached)) {
+            state = StableSearchResultsState(currentValue, isReady = true)
+        } else if (state.isReady && !isSearchRefreshing) {
+            // Publish the final combined snapshot once all local providers have completed.
+            state = StableSearchResultsState(currentValue, isReady = true)
+        }
+        return state
+    }
+}
+
 private data class RegularSearchResultsSnapshot(
     val apps: List<AppInfo> = emptyList(),
     val appShortcuts: List<StaticShortcut> = emptyList(),
@@ -154,77 +200,36 @@ internal fun rememberSettledRegularSearchRenderingState(
     query: String,
     currentState: SectionRenderingState,
     isAppSearchRefreshing: Boolean,
-    secondarySectionsRefreshing: Set<SearchSection>,
+    isSecondarySearchRefreshing: Boolean,
 ): SectionRenderingState {
-    val displayedSnapshot =
+    val currentSnapshot =
         RegularSearchResultsSnapshot(
-            apps =
-                remember { SettledSearchResultsBuffer(emptyList<AppInfo>()) }
-                    .displayedValue(query, currentState.displayApps, isAppSearchRefreshing),
-            appShortcuts =
-                remember { SettledSearchResultsBuffer(emptyList<StaticShortcut>()) }
-                    .displayedValue(
-                        query,
-                        currentState.appShortcutResults,
-                        SearchSection.APP_SHORTCUTS in secondarySectionsRefreshing,
-                    ),
-            contacts =
-                remember { SettledSearchResultsBuffer(emptyList<ContactInfo>()) }
-                    .displayedValue(
-                        query,
-                        currentState.contactResults,
-                        SearchSection.CONTACTS in secondarySectionsRefreshing,
-                    ),
-            files =
-                remember { SettledSearchResultsBuffer(emptyList<DeviceFile>()) }
-                    .displayedValue(
-                        query,
-                        currentState.fileResults,
-                        SearchSection.FILES in secondarySectionsRefreshing,
-                    ),
-            settings =
-                remember { SettledSearchResultsBuffer(emptyList<DeviceSetting>()) }
-                    .displayedValue(
-                        query,
-                        currentState.settingResults,
-                        SearchSection.SETTINGS in secondarySectionsRefreshing,
-                    ),
-            appSettings =
-                remember { SettledSearchResultsBuffer(emptyList<AppSettingResult>()) }
-                    .displayedValue(
-                        query,
-                        currentState.appSettingResults,
-                        SearchSection.APP_SETTINGS in secondarySectionsRefreshing,
-                    ),
-            calendarEvents =
-                remember { SettledSearchResultsBuffer(emptyList<CalendarEventInfo>()) }
-                    .displayedValue(
-                        query,
-                        currentState.calendarEvents,
-                        SearchSection.CALENDAR in secondarySectionsRefreshing,
-                    ),
-            reminders =
-                remember { SettledSearchResultsBuffer(emptyList<ReminderInfo>()) }
-                    .displayedValue(
-                        query,
-                        currentState.reminderResults,
-                        SearchSection.REMINDERS in secondarySectionsRefreshing,
-                    ),
-            bookmarks =
-                remember { SettledSearchResultsBuffer(emptyList<BookmarkInfo>()) }
-                    .displayedValue(
-                        query,
-                        currentState.bookmarkResults,
-                        SearchSection.BOOKMARKS in secondarySectionsRefreshing,
-                    ),
-            notes =
-                remember { SettledSearchResultsBuffer(emptyList<NoteInfo>()) }
-                    .displayedValue(
-                        query,
-                        currentState.noteResults,
-                        SearchSection.NOTES in secondarySectionsRefreshing,
-                    ),
+            apps = currentState.displayApps,
+            appShortcuts = currentState.appShortcutResults,
+            contacts = currentState.contactResults,
+            files = currentState.fileResults,
+            settings = currentState.settingResults,
+            appSettings = currentState.appSettingResults,
+            calendarEvents = currentState.calendarEvents,
+            reminders = currentState.reminderResults,
+            bookmarks = currentState.bookmarkResults,
+            notes = currentState.noteResults,
         )
+    var settleDeadlineReached by remember(query) { mutableStateOf(false) }
+    LaunchedEffect(query) {
+        if (query.isNotBlank()) {
+            delay(REGULAR_SEARCH_SETTLE_DEADLINE_MS)
+            settleDeadlineReached = true
+        }
+    }
+    val displayedSnapshot =
+        remember { StableSearchResultsBuffer(RegularSearchResultsSnapshot()) }
+            .displayedValue(
+                query = query,
+                currentValue = currentSnapshot,
+                isSearchRefreshing = isAppSearchRefreshing || isSecondarySearchRefreshing,
+                deadlineReached = settleDeadlineReached,
+            ).value
 
     if (query.isBlank()) return currentState
 
